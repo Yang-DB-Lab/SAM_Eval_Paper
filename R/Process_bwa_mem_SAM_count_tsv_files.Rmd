@@ -1,0 +1,176 @@
+---
+title: "Process_PE_count_tsv_files"
+author: "Guang"
+date: "6/23/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## List all tsv file
+
+There are multiple tsv files related to pair-end sam files. This script is designed to process all the tsv files and then merge the data together to a single summary tsv file.
+
+```{r list-all-tsv-files, eval=TRUE}
+all_tsv_files <- list.files(pattern = ".*different_mapping_count.tsv")
+```
+
+## Processing one tsv file to confirm tsv file content
+
+This part will not be included into the final code. This part use one tsv file as input and check what are the contents inside it so that a function will be defined later which will be used to analyze all tsv files in batch mode(using apply() function).
+```{r process-single-tsv-file, eval=TRUE}
+library(data.table)
+one_tsv_data <- fread(all_tsv_files[1], header = TRUE, 
+                      stringsAsFactors = FALSE)
+all_tsv_files[1]
+read1_right_read2_not <- one_tsv_data$Read1_Uniqueness == "Uniq_right" & one_tsv_data$Read2_Uniqueness !="Uniq_right"
+one_tsv_data[read1_right_read2_not, ]
+# chr1.130178182-130178281.0bp.adapter.-100bp.gap	Uniq_right	nonUniq_right
+# chr13.61103475-61103574.0bp.adapter.-100bp.gap	Uniq_right	nonUniq_right
+# chr14.102559788-102559887.0bp.adapter.-100bp.gap	Uniq_right	nonUniq_right
+# chr16.48184828-48184927.0bp.adapter.-100bp.gap	Uniq_right	nonUniq_right
+# chr5.145932578-145932677.0bp.adapter.-100bp.gap	Uniq_right	nonUniq_right
+# chrX.15948337-15948436.0bp.adapter.-100bp.gap	Uniq_right	nonUniq_right
+# chrY.21780032-21780131.0bp.adapter.-100bp.gap	Uniq_right	nonUniq_right
+
+read1_not_read2_right <- one_tsv_data$Read1_Uniqueness != "Uniq_right" & one_tsv_data$Read2_Uniqueness =="Uniq_right"
+one_tsv_data[read1_not_read2_right, ]
+# chr2.175150133-175150232.0bp.adapter.-100bp.gap	nonUniq_right	Uniq_right
+# chr3.71394355-71394454.0bp.adapter.-100bp.gap	nonUniq_right	Uniq_right
+# chr6.58149403-58149502.0bp.adapter.-100bp.gap	nonUniq_right	Uniq_right
+# chr7.7620129-7620228.0bp.adapter.-100bp.gap	nonUniq_right	Uniq_right
+# chrX.46818505-46818604.0bp.adapter.-100bp.gap	nonUniq_right	Uniq_right
+# chrX.153523649-153523748.0bp.adapter.-100bp.gap	nonUniq_right	Uniq_right
+# chrY.44749908-44750007.0bp.adapter.-100bp.gap	nonUniq_right	Uniq_right
+
+unique(one_tsv_data$Read1_Uniqueness)
+unique(one_tsv_data$Read2_Uniqueness)
+read1_uniq_right_sum <- sum(one_tsv_data$Read1_Uniqueness == "Uniq_right")
+read1_nonUniq_right_sum <- sum(one_tsv_data$Read1_Uniqueness == "nonUniq_right")
+read1_nonUniq_wrong_sum <- sum(one_tsv_data$Read1_Uniqueness == "nonUniq_wrong")
+
+read2_uniq_right_sum <- sum(one_tsv_data$Read2_Uniqueness == "Uniq_right")
+read2_nonUniq_right_sum <- sum(one_tsv_data$Read2_Uniqueness == "nonUniq_right")
+read2_nonUniq_wrong_sum <- sum(one_tsv_data$Read2_Uniqueness == "nonUniq_wrong")
+
+unique_read1_tags <- unique(one_tsv_data$Read1_Uniqueness)
+read1_tags_sum <- rep(0, length(unique_read1_tags))
+for(i in 1: length(unique_read1_tags) )
+{
+  read1_tags_sum[i] <- sum(one_tsv_data$Read1_Uniqueness== unique_read1_tags[i])
+}
+names(read1_tags_sum) <- paste0("read1_", unique_read1_tags)
+read1_tags_sum
+
+unique_read2_tags <- unique(one_tsv_data$Read2_Uniqueness)
+read2_tags_sum <- rep(0, length(unique_read2_tags))
+for(i in 1: length(unique_read2_tags) )
+{
+  read2_tags_sum[i] <- sum(one_tsv_data$Read2_Uniqueness== unique_read2_tags[i])
+}
+names(read2_tags_sum) <- paste0("read2_", unique_read2_tags)
+read2_tags_sum
+
+df <- data.frame(c(read1_tags_sum, read2_tags_sum))
+transverse_df <- t(df)
+row.names(transverse_df) <- all_tsv_files[1]
+transverse_df
+
+
+## Stupid but stable method:
+sum_df <- data.frame(read1_uniq_right = read1_uniq_right_sum,
+                     read1_nonUniq_right = read1_nonUniq_right_sum,
+                     read1_nonUniq_wrong = read1_nonUniq_wrong_sum,
+                      
+                     read2_uniq_right = read2_uniq_right_sum,
+                     read2_nonUniq_right = read2_nonUniq_right_sum,
+                     read2_nonUniq_wrong = read2_nonUniq_wrong_sum)
+row_name <- gsub("GRCm38.100.genome.reads.","",all_tsv_files[1])
+row_name <- gsub(".bwamem.pe.sam.different_mapping_count.tsv","",row_name)
+row_name
+row.names(sum_df) <- row_name
+sum_df
+```
+
+
+
+## Function to process one tsv file
+
+The function here is used to do statistics of mapping result of one single tsv file from one aligned pair-end sam file.
+
+```{r summary-of-one-tsv-file}
+summary_count_tsv <- function(one_tsv_file)
+{
+  library(data.table)
+  one_tsv_data <- fread(one_tsv_file, header = TRUE, stringsAsFactors = FALSE)
+  
+  # include 0 scored uniq_right below
+  one_tsv_data$read1_uniq_right_read2_not <- (one_tsv_data$Read1_Uniqueness == "Uniq_right" &
+                                               (!one_tsv_data$Read2_Uniqueness == "Uniq_right") )
+  one_tsv_data$read2_uniq_right_read1_not <- ( (!one_tsv_data$Read1_Uniqueness == "Uniq_right") &
+                                                one_tsv_data$Read2_Uniqueness == "Uniq_right" )
+  one_tsv_data$read1_read2_both_uniq <- (one_tsv_data$Read1_Uniqueness == "Uniq_right" &
+                                               one_tsv_data$Read2_Uniqueness == "Uniq_right")
+  
+  one_tsv_data$read1_or_read2_uniq <- (one_tsv_data$Read1_Uniqueness == "Uniq_right" | 
+                                      one_tsv_data$Read2_Uniqueness == "Uniq_right")
+  
+  read1_Uniqright_read2_not_sum <- sum(one_tsv_data$read1_uniq_right_read2_not)
+  read1_not_read2_Uniqright_sum <- sum(one_tsv_data$read2_uniq_right_read1_not)
+  read1_read2_both_Uniqright_sum <- sum(one_tsv_data$read1_read2_both_uniq )
+  read1_or_read2_Uniq_sum <- sum(one_tsv_data$read1_or_read2_uniq)
+  
+  read1_uniq_right_sum <- sum(one_tsv_data$Read1_Uniqueness == "Uniq_right")
+  read1_nonUniq_right_sum <- sum(one_tsv_data$Read1_Uniqueness == "nonUniq_right")
+  read1_nonUniq_wrong_sum <- sum(one_tsv_data$Read1_Uniqueness == "nonUniq_wrong")
+  
+  
+  read2_uniq_right_sum <- sum(one_tsv_data$Read2_Uniqueness == "Uniq_right")
+  read2_nonUniq_right_sum <- sum(one_tsv_data$Read2_Uniqueness == "nonUniq_right")
+  read2_nonUniq_wrong_sum <- sum(one_tsv_data$Read2_Uniqueness == "nonUniq_wrong")
+  
+  
+  # one row data frame: row.name is tsv file name; col.names are tags.
+  ## Stupid but stable method:
+  sample_name <- gsub("GRCm38.100.genome.reads.","",one_tsv_file)
+  sample_name <- gsub(".bwamem.pe.sam.different_mapping_count.tsv","",sample_name)
+  # sample_name
+  sum_df <- data.frame(sample = sample_name,
+                       read1_uniq_right = read1_uniq_right_sum,
+                       read1_nonUniq_right = read1_nonUniq_right_sum,
+                       read1_nonUniq_wrong = read1_nonUniq_wrong_sum,
+                        
+                       read2_uniq_right = read2_uniq_right_sum,
+                       read2_nonUniq_right = read2_nonUniq_right_sum,
+                       read2_nonUniq_wrong = read2_nonUniq_wrong_sum,
+                       
+                       read1_uniq_right_read2_not = read1_Uniqright_read2_not_sum,
+                       read1_not_read2_uniq_right = read1_not_read2_Uniqright_sum,
+                       read1_read2_both_uniq_right = read1_read2_both_Uniqright_sum,
+                       read1_or_read2_uniq = read1_or_read2_Uniq_sum)
+  return(sum_df)
+}
+# minus_100Gap <- summary_count_tsv(all_tsv_files[1])
+
+```
+
+## Apply the summary function to all tsv files
+
+Here I will use a `apply()` function to all tsv files so that I will get statistics of read mapping tags in each tsv file.
+
+```{r batch-tsv-summary, eval=TRUE}
+summary_data_all_tsv <- lapply(all_tsv_files, summary_count_tsv)
+str(summary_data_all_tsv)
+all_tsv_df <- Reduce( function(x,y) merge(x,y, all=TRUE), summary_data_all_tsv)
+# all_tsv_df
+write.table(all_tsv_df,
+            file = "summary_of_bwa_mem_mapping_result_all_SAMs_20200630.tsv",
+            col.names = TRUE,
+            row.names = FALSE,
+            sep = '\t')
+
+```
+
+
